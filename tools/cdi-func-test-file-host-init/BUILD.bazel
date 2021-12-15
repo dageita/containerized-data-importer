@@ -1,0 +1,162 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
+load("@io_bazel_rules_container_rpm//rpm:rpm.bzl", "rpm_image")
+load("@io_bazel_rules_docker//container:container.bzl", "container_image")
+
+rpm_image(
+    name = "cdi-func-test-file-host-init-base-image",
+    architecture = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
+        "//conditions:default": "amd64",
+    }),
+    base = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "@fedora-aarch64//image",
+        "//conditions:default": "@fedora//image",
+    }),
+    rpms = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": [
+            "@qemu-img-aarch64//file",
+            "@xen-libs-aarch64//file",
+            "@libaio-aarch64//file",
+            "@liburing-aarch64//file",
+            "@capstone-aarch64//file",
+        ],
+        "//conditions:default": [
+            "@qemu-img//file",
+            "@xen-libs//file",
+            "@libaio//file",
+            "@liburing//file",
+            "@capstone//file",
+        ],
+    }),
+)
+
+rpm_image(
+    name = "cdi-func-test-file-host-http-base-image",
+    architecture = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
+        "//conditions:default": "amd64",
+    }),
+    base = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "@fedora-aarch64//image",
+        "//conditions:default": "@fedora//image",
+    }),
+    rpms = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": [
+            "@nginx-aarch64//file",
+            "@gperftools-lib-aarch64//file",
+            "@libunwind-aarch64//file",
+            "@nginx-mimetypes//file",
+            "@nginx-filesystem//file",
+        ],
+        "//conditions:default": [
+            "@nginx//file",
+            "@gperftools-lib//file",
+            "@libunwind//file",
+            "@nginx-mimetypes//file",
+            "@nginx-filesystem//file",
+        ],
+    }),
+)
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "kubevirt.io/containerized-data-importer/tools/cdi-func-test-file-host-init",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/util:go_default_library",
+        "//tests/utils:go_default_library",
+        "//vendor/github.com/pkg/errors:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "cdi-func-test-file-host-init",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)
+
+container_image(
+    name = "cdi-func-test-file-host-init-file-image",
+    architecture = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
+        "//conditions:default": "amd64",
+    }),
+    base = ":cdi-func-test-file-host-init-base-image",
+    directory = "/",
+    tars = [
+        ":test-img-tar",
+        ":test-invalid-img-tar",
+    ],
+)
+
+container_image(
+    name = "cdi-func-test-file-host-init-image",
+    architecture = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
+        "//conditions:default": "amd64",
+    }),
+    base = ":cdi-func-test-file-host-init-file-image",
+    directory = "/usr/bin",
+    entrypoint = [
+        "cdi-func-test-file-host-init",
+        "-alsologtostderr",
+    ],
+    files = [":cdi-func-test-file-host-init"],
+    visibility = ["//visibility:public"],
+)
+
+container_image(
+    name = "cdi-func-test-file-host-http-image",
+    architecture = select({
+        "@io_bazel_rules_go//go/platform:linux_arm64": "arm64",
+        "//conditions:default": "amd64",
+    }),
+    base = ":cdi-func-test-file-host-http-base-image",
+    cmd = "mkdir -p /usr/share/nginx/html/images/priv",
+    directory = "/",
+    entrypoint = ["nginx"],
+    env = {
+        "container": "",
+        "docker": "",
+    },
+    ports = [
+        "80",
+        "81",
+        "82",
+        "83",
+    ],
+    tars = [":nginx-conf-tar"],
+    visibility = ["//visibility:public"],
+)
+
+pkg_tar(
+    name = "test-img-tar",
+    srcs = ["//:test-images"],
+    mode = "644",
+    package_dir = "/tmp/source",
+)
+
+pkg_tar(
+    name = "test-invalid-img-tar",
+    srcs = ["//:test-invalid-images"],
+    mode = "644",
+    package_dir = "/tmp/source/invalid_qcow_images",
+)
+
+filegroup(
+    name = "nginx-conf",
+    srcs = [
+        ":htpasswd",
+        ":nginx.conf",
+    ],
+)
+
+pkg_tar(
+    name = "nginx-conf-tar",
+    srcs = [":nginx-conf"],
+    mode = "644",
+    package_dir = "/etc/nginx/",
+)
